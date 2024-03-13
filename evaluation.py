@@ -20,6 +20,7 @@ TOKENIZER_MAX_SEQ_LEN = 2048
 
 BATCH_SIZE = args.batch_size  # Could be much bigger depending on your model and your GPU. To be tuned for speed performance
 
+NUM_BEAMS = 3
 MAX_NEW_TOKENS = 256  # Increase for a task with long output
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -29,13 +30,13 @@ prompt_generator = PromptGenerator(args.num_examples)
 
 
 ## TODO: replace qa_gender dataset in above line with the pormpts csv file given to your group
-qa_gender_ds = load_dataset("vipulgupta/CALM", "qa_gender", split='test', trust_remote_code=True)
+qa_gender_ds = load_dataset("csv", data_files="group_5-1.csv")
 
 
 ## TODO: Create tokenizer user hugingface AutoTokenizer module
-tokenizer =
-
-
+tokenizer = AutoTokenizer.from_pretrained(NAME_MODEL)
+tokenizer.padding_side = "left"
+tokenizer.pad_token = tokenizer.eos_token
 
 model = AutoModelForCausalLM.from_pretrained(NAME_MODEL, device_map='auto', torch_dtype=torch.float16, trust_remote_code=True)
 #model = AutoModelForCausalLM.from_pretrained(NAME_MODEL, torch_dtype=torch.float16, trust_remote_code=True)
@@ -45,25 +46,29 @@ def save_result(dataset, out_file, batch_size) :
     idx_batches = [list(range(idx, min(idx + batch_size, len(dataset)))) for idx in range(0, len(dataset), batch_size)]
     for idx_batch in tqdm(idx_batches):
         batch = dataset.select(idx_batch)
-        ## TODO : convert your inputs into prompts. Note for this assignment all models are instruction finetnued and no additional information needs to be added to prompts
-        texts = []
-
-        ## TODO: use tokenizer defined on line 15 to create prompts into tokens and .
-        tokens =
-
-        ## This is to make sure you do not face device mismatch error. You can comment below line if you have shofted tokens to device in previous line
-        tokens = tokens.to(device)
-
-        ## TODO: use model to generate outputs for the prompts. You can use model.generate function
-        generated_tokens_org =
-
+        texts = [prompt_generator.prepare_prompt(sample) for sample in batch]
+        tokens = tokenizer(
+            texts,
+            return_tensors="pt",
+            truncation=True,
+            max_length=TOKENIZER_MAX_SEQ_LEN,
+            padding=True,
+            add_special_tokens=False,
+        ).to(device)
+        generated_tokens_org = model.generate(
+            tokens.input_ids,
+            num_beams=NUM_BEAMS,
+            max_new_tokens=MAX_NEW_TOKENS,
+        )
         generated_tokens = generated_tokens_org[:, tokens.input_ids.shape[1]:]  # We truncate the original prompts from the generated texts
 
         ## TODO: convert generated tokens to text using tokenizer
-        generated_texts =
+        generated_texts = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
         #print ('output : ', generated_texts)
         all_generated_answers.append(generated_texts)
 
+    ## convert list of list to list
+    all_generated_answers = [item for sublist in all_generated_answers for item in sublist]
     ## save list in text file
     ##TODO : change the saving format according to your preferred file format
     with open(out_file, 'w+') as f:
@@ -71,7 +76,7 @@ def save_result(dataset, out_file, batch_size) :
 
 
 if not os.path.exists('results'):
-    os.makedir('results')
+    os.mkdir('results')
 
 file_name = args.model.split('/')[1]
 
